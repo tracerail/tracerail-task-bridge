@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "tracerail-task-bridge"
+version = "0.1.0"
+description = "A FastAPI service to bridge HTTP requests to Temporal workflow signals for TraceRail."
+authors = ["Tracerail Team <team@tracerail.io>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.111.0"
+uvicorn = { extras = ["standard"], version = "^0.29.0" }
+pydantic = "^2.0.0"
+temporalio = "^1.6.0"
+python-dotenv = "^1.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+httpx = "^0.27.0" # For testing the API endpoints
+ruff = "^0.4.5"
+black = "^24.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
