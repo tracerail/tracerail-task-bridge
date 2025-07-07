@@ -1,0 +1,339 @@
+{
+  "consumer": {
+    "name": "TracerailActionCenter"
+  },
+  "interactions": [
+    {
+      "description": "a request for a single case",
+      "providerStates": [
+        {
+          "name": "a case with ID ER-2024-08-124 exists"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json"
+        },
+        "method": "GET",
+        "path": "/api/v1/cases/ER-2024-08-124"
+      },
+      "response": {
+        "body": {
+          "activeInteraction": {
+            "interactionId": "approve_request_ER-2024-08-124",
+            "interactionType": "action_buttons",
+            "payload": {
+              "actions": [
+                {
+                  "label": "Approve",
+                  "style": "primary",
+                  "value": "approved"
+                }
+              ]
+            },
+            "prompt": "A prompt for the user.",
+            "submitUrl": "https://api.tracerail.com/v1/responses/ER-2024-08-124"
+          },
+          "activityStream": [
+            {
+              "id": 1,
+              "sender": "System",
+              "text": "Case created and assigned.",
+              "timestamp": "2024-08-21T10:30:00Z",
+              "type": "system_event"
+            }
+          ],
+          "caseDetails": {
+            "assignee": [
+              {
+                "name": "Jane Smith"
+              }
+            ],
+            "caseData": {
+              "ai_policy_check": "A policy check result string.",
+              "ai_risk_score": "Medium",
+              "ai_summary": "A summary of the AI analysis.",
+              "amount": 750,
+              "category": "Travel",
+              "currency": "USD"
+            },
+            "caseId": "ER-2024-08-124",
+            "caseTitle": "Expense Report from John Doe for $750.00",
+            "createdAt": "2024-08-21T10:30:00Z",
+            "status": "Pending Agent Approval",
+            "submitter": [
+              {
+                "name": "John Doe"
+              }
+            ],
+            "updatedAt": "2024-08-21T10:35:00Z"
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.activeInteraction.interactionId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.interactionType": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.payload.actions": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.activeInteraction.payload.actions[*].label": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.payload.actions[*].style": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.payload.actions[*].value": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.prompt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activeInteraction.submitUrl": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activityStream": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.activityStream[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.activityStream[*].sender": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activityStream[*].text": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.activityStream[*].timestamp": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "format": "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                  "match": "datetime"
+                }
+              ]
+            },
+            "$.activityStream[*].type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.assignee": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.caseDetails.assignee[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.ai_policy_check": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.ai_risk_score": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.ai_summary": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.amount": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.category": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseData.currency": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.caseTitle": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.createdAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "format": "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                  "match": "datetime"
+                }
+              ]
+            },
+            "$.caseDetails.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.submitter": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.caseDetails.submitter[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.caseDetails.updatedAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "format": "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                  "match": "datetime"
+                }
+              ]
+            }
+          },
+          "header": {},
+          "status": {}
+        },
+        "status": 200
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "15.0.1"
+    },
+    "pactRust": {
+      "ffi": "0.4.22",
+      "models": "1.2.3"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "TracerailAPI"
+  }
+}

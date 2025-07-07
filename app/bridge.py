@@ -1,10 +1,10 @@
 """
-TraceRail Task Bridge - FastAPI Application (v2)
+TraceRail Task Bridge - FastAPI Application (v3)
 
 This service acts as a bridge between human users/external systems and
 running Temporal workflows. It uses FastAPI's lifespan management to maintain
-a single, persistent connection to the Temporal service for efficiency and
-robustness.
+a single, persistent connection to the Temporal service and uses dependency
+injection to provide services to its endpoints.
 """
 
 import os
@@ -12,11 +12,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Path
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from temporalio.client import Client
 from temporalio.service import RPCError
+
+# Import the core domain service and response model
+from tracerail.domain.cases import Case as CaseResponse
+from tracerail.domain.cases import CaseService
 
 
 # --- Application Lifespan Management ---
@@ -26,7 +30,14 @@ async def lifespan(app: FastAPI):
     """
     Manages the Temporal client's lifecycle with the FastAPI application.
     The client is created on startup and is available for all requests.
+    In testing mode, the client connection is skipped.
     """
+    if os.getenv("TESTING_MODE") == "true":
+        print("🏃 Running in TESTING_MODE, skipping Temporal connection.")
+        app.state.temporal_client = None
+        yield
+        return
+
     host = os.getenv("TEMPORAL_HOST", "localhost")
     port = int(os.getenv("TEMPORAL_PORT", 7233))
     namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
@@ -39,7 +50,7 @@ async def lifespan(app: FastAPI):
         print("✅ Successfully connected to Temporal.")
         yield
     finally:
-        if "temporal_client" in app.state and app.state.temporal_client:
+        if hasattr(app.state, "temporal_client") and app.state.temporal_client:
             await app.state.temporal_client.close()
             print("🔌 Temporal client connection closed.")
 
@@ -48,10 +59,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="TraceRail Task Bridge",
-    description="A bridge service for sending signals to human-in-the-loop workflows.",
-    version="2.0.0",
+    description="A bridge service for interacting with TraceRail workflows.",
+    version="3.0.0",
     lifespan=lifespan,
 )
+
+
+# --- Dependency Injection ---
+
+def get_case_service(request: Request) -> CaseService:
+    """
+    A dependency provider that creates and yields a CaseService instance.
+    It retrieves the Temporal client from the application state.
+    """
+    client: Optional[Client] = request.app.state.temporal_client
+    if not client:
+        # This will be true in TESTING_MODE, which is handled by tests.
+        # In a real environment, this would indicate a startup failure.
+        raise HTTPException(
+            status_code=503,
+            detail="Temporal client is not available.",
+        )
+    return CaseService(client=client)
 
 
 # --- Pydantic Models for API Payloads ---
@@ -79,6 +108,21 @@ class WorkflowSignalInfo(BaseModel):
 
 # --- API Endpoints ---
 
+@app.get("/api/v1/cases/{caseId}", response_model=CaseResponse, tags=["Cases"])
+async def get_case_by_id(
+    caseId: str = Path(..., description="The ID of the case to retrieve."),
+    case_service: CaseService = Depends(get_case_service),
+):
+    """
+    Retrieves the complete details for a single case by calling the core
+    domain service.
+    """
+    case = await case_service.get_by_id(case_id=caseId)
+    if case:
+        return case
+    raise HTTPException(status_code=404, detail=f"Case with ID '{caseId}' not found.")
+
+
 @app.get("/", response_class=HTMLResponse, tags=["General"])
 async def root():
     """
@@ -105,6 +149,9 @@ async def health_check(request: Request):
     """
     Performs a health check on the application and its connection to Temporal.
     """
+    if os.getenv("TESTING_MODE") == "true":
+        return {"status": "healthy", "mode": "testing"}
+
     client: Optional[Client] = request.app.state.temporal_client
     is_connected = client is not None and not client.is_closed
     return {
@@ -121,7 +168,13 @@ async def post_decision(request: Request, payload: Decision):
     """
     Receives a decision and signals the corresponding running workflow.
     """
-    client: Client = request.app.state.temporal_client
+    client: Optional[Client] = request.app.state.temporal_client
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="Temporal client is not available in the current mode.",
+        )
+
     signal_name = "decision"
     try:
         handle = client.get_workflow_handle(payload.workflow_id)
@@ -151,7 +204,13 @@ async def list_workflows(
     """
     Lists recent workflows from the Temporal service.
     """
-    client: Client = request.app.state.temporal_client
+    client: Optional[Client] = request.app.state.temporal_client
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="Temporal client is not available in the current mode.",
+        )
+
     try:
         workflows = []
         async for workflow in client.list_workflows(query=query):
