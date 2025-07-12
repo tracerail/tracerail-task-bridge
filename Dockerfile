@@ -1,5 +1,9 @@
 # A simple, single-stage Dockerfile that correctly handles the local path dependency.
 # This approach is common for monorepos or closely-related projects where services are developed together.
+#
+# NOTE: This Dockerfile assumes the build context is the root of the monorepo
+# (e.g., the parent directory of 'tracerail-bootstrap', 'tracerail-core', etc.).
+# This is configured in the docker-compose.yml file with 'context: ..'.
 
 # Use a slim, official Python base image.
 FROM python:3.11-slim
@@ -19,8 +23,7 @@ RUN pip install "poetry==$POETRY_VERSION"
 WORKDIR /app
 
 # Copy both projects into the build context.
-# This works because the docker-compose.yml sets the build context
-# to the parent directory, making both project folders available.
+# The paths are relative to the build context set in docker-compose.yml.
 COPY tracerail-core/ ./tracerail-core/
 COPY tracerail-task-bridge/ ./tracerail-task-bridge/
 
@@ -30,7 +33,7 @@ WORKDIR /app/tracerail-task-bridge
 
 # Install dependencies for the bridge project.
 # From this working directory, Poetry can correctly resolve the relative path
-# `../tracerail-core` to `/app/tracerail-core`.
+# `../tracerail-core` in pyproject.toml to `/app/tracerail-core`.
 # We use `--only main` to exclude development dependencies like pytest.
 RUN poetry install --only main
 

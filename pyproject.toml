@@ -5,7 +5,7 @@ description = "A FastAPI service to bridge HTTP requests to Temporal workflow si
 authors = ["Tracerail Team <team@tracerail.io>"]
 readme = "README.md"
 license = "MIT"
-packages = [{ include = "app" }]
+packages = [{ include = "app", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -13,7 +13,10 @@ fastapi = "^0.111.0"
 uvicorn = { extras = ["standard"], version = "^0.29.0" }
 pydantic = "^2.0.0"
 python-dotenv = "^1.0.1"
-tracerail-core = { path = "../tracerail-core", develop = true }
+# Reverted to a path-based dependency. This works seamlessly for both local
+# development (e.g., `poetry lock`) and for the Docker build, provided the
+# build context is set correctly in docker-compose.yml.
+tracerail-core = { path = "../tracerail-core" }
 prometheus-fastapi-instrumentator = "^7.1.0"
 prometheus-client = "^0.22.1"
 opentelemetry-sdk = "^1.35.0"
@@ -32,3 +35,6 @@ trio = "^0.30.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

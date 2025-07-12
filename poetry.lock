@@ -2129,11 +2129,13 @@ optional = false
 python-versions = "^3.11"
 groups = ["main"]
 files = []
-develop = true
+develop = false
 
 [package.dependencies]
 httpx = "^0.27.0"
 openai = "^1.26.0"
+opentelemetry-exporter-otlp = "^1.35.0"
+opentelemetry-sdk = "^1.35.0"
 pydantic = "^2.5.0"
 pydantic-settings = "^2.3.4"
 python-dotenv = "^1.0.0"
@@ -2754,4 +2756,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "e12d9f42e6860750700c97f52c6be7833b6bbc9b6e44e187145692b5e8286f5f"
+content-hash = "651b7303b03b17a0bde3dd4e016e2c116ef646db6c0945d0691fd24e48fe7f91"
