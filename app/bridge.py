@@ -17,15 +17,20 @@ from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from pydantic import BaseModel, Field
-from temporalio.client import Client
+from temporalio.client import Client, Interceptor
 from temporalio.service import RPCError
+from temporalio.contrib.opentelemetry import TracingInterceptor
 
 # Import the core domain service and response model
 from tracerail.domain.cases import Case as CaseResponse
 from tracerail.domain.cases import CaseService
 from tracerail.workflows.flexible_case_workflow import FlexibleCaseWorkflow
+
+# Import our custom tracing setup
+from .tracing import setup_tracing
 
 
 # --- Structured Logging Setup ---
@@ -50,6 +55,9 @@ async def lifespan(app: FastAPI):
     The client is created on startup and is available for all requests.
     In testing mode, the client connection is skipped.
     """
+    # Configure OpenTelemetry Tracing on startup
+    setup_tracing("tracerail-task-bridge")
+
     if os.getenv("TESTING_MODE") == "true":
         log.info("Running in TESTING_MODE, skipping Temporal connection.")
         app.state.temporal_client = None
@@ -63,7 +71,12 @@ async def lifespan(app: FastAPI):
 
     log.info("Connecting to Temporal service", target=target)
     try:
-        client = await Client.connect(target, namespace=namespace)
+        # Create a client with the tracing interceptor
+        client = await Client.connect(
+            target,
+            namespace=namespace,
+            interceptors=[TracingInterceptor()],
+        )
         app.state.temporal_client = client
         log.info("Successfully connected to Temporal.")
         yield
@@ -102,12 +115,9 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# --- Metrics Instrumentation ---
-# Exposes a /metrics endpoint for Prometheus scraping.
-instrumentator = Instrumentator().instrument(app)
-# Add the single, default metric provider to generate all necessary metrics.
-instrumentator.add(metrics.default())
-instrumentator.expose(app)
+# --- Metrics and Tracing Instrumentation ---
+Instrumentator().instrument(app).expose(app)
+FastAPIInstrumentor.instrument_app(app)
 
 # --- Dependency Injection ---
 

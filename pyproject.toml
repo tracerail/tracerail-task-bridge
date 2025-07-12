@@ -16,6 +16,9 @@ python-dotenv = "^1.0.1"
 tracerail-core = { path = "../tracerail-core", develop = true }
 prometheus-fastapi-instrumentator = "^7.1.0"
 prometheus-client = "^0.22.1"
+opentelemetry-sdk = "^1.35.0"
+opentelemetry-exporter-otlp = "^1.35.0"
+opentelemetry-instrumentation-fastapi = "^0.56b0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
