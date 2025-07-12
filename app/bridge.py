@@ -8,12 +8,16 @@ injection to provide services to its endpoints.
 """
 
 import os
+import uuid
+import structlog
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, Path
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Path, Body
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from pydantic import BaseModel, Field
 from temporalio.client import Client
 from temporalio.service import RPCError
@@ -21,6 +25,20 @@ from temporalio.service import RPCError
 # Import the core domain service and response model
 from tracerail.domain.cases import Case as CaseResponse
 from tracerail.domain.cases import CaseService
+from tracerail.workflows.flexible_case_workflow import FlexibleCaseWorkflow
+
+
+# --- Structured Logging Setup ---
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+log = structlog.get_logger()
 
 
 # --- Application Lifespan Management ---
@@ -33,7 +51,7 @@ async def lifespan(app: FastAPI):
     In testing mode, the client connection is skipped.
     """
     if os.getenv("TESTING_MODE") == "true":
-        print("🏃 Running in TESTING_MODE, skipping Temporal connection.")
+        log.info("Running in TESTING_MODE, skipping Temporal connection.")
         app.state.temporal_client = None
         yield
         return
@@ -43,16 +61,16 @@ async def lifespan(app: FastAPI):
     namespace = os.getenv("TEMPORAL_NAMESPACE", "default")
     target = f"{host}:{port}"
 
-    print(f"Connecting to Temporal service at {target}...")
+    log.info("Connecting to Temporal service", target=target)
     try:
         client = await Client.connect(target, namespace=namespace)
         app.state.temporal_client = client
-        print("✅ Successfully connected to Temporal.")
+        log.info("Successfully connected to Temporal.")
         yield
     finally:
         if hasattr(app.state, "temporal_client") and app.state.temporal_client:
             await app.state.temporal_client.close()
-            print("🔌 Temporal client connection closed.")
+            log.info("Temporal client connection closed.")
 
 
 # --- FastAPI Application Setup ---
@@ -64,6 +82,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- CORS Middleware Setup ---
+# This is crucial for allowing the frontend (which runs on a different port)
+# to make API calls to this backend.
+# See: https://fastapi.tiangolo.com/tutorial/cors/
+
+# Define the list of origins that are allowed to make cross-origin requests.
+# It's good practice to control this via an environment variable for production.
+allowed_origins = [
+    os.getenv("FRONTEND_URL", "http://localhost:3000"),
+    "http://localhost:3002",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all standard HTTP methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+# --- Metrics Instrumentation ---
+# Exposes a /metrics endpoint for Prometheus scraping.
+instrumentator = Instrumentator().instrument(app)
+# Add the single, default metric provider to generate all necessary metrics.
+instrumentator.add(metrics.default())
+instrumentator.expose(app)
 
 # --- Dependency Injection ---
 
@@ -85,28 +129,85 @@ def get_case_service(request: Request) -> CaseService:
 
 # --- Pydantic Models for API Payloads ---
 
-class Decision(BaseModel):
-    """
-    Represents the payload for sending a decision to a workflow.
-    """
-    workflow_id: str = Field(..., description="The ID of the Temporal workflow to signal.")
-    status: str = Field(..., description="The decision status (e.g., 'approved', 'rejected').")
-    reviewer: str = Field(..., description="The name or ID of the person who made the decision.")
-    comments: Optional[str] = Field(None, description="Optional comments from the reviewer.")
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional metadata.")
+class AgentDecisionPayload(BaseModel):
+    """Represents the payload from the frontend for an agent's decision."""
+    decision: str = Field(..., description="The decision made by the agent (e.g., 'approved', 'rejected').")
 
 
-class WorkflowSignalInfo(BaseModel):
-    """
-    Response model after successfully sending a signal.
-    """
-    workflow_id: str
-    signal_name: str
-    signal_sent: bool = True
-    timestamp: datetime
+class DecisionResponse(BaseModel):
+    """Confirmation response after a decision signal has been sent."""
+    caseId: str
+    status: str
+    message: str
+
+
+class CreateCasePayload(BaseModel):
+    """Defines the required data to create a new case."""
+    submitter_name: str = Field(..., description="The name of the person submitting the case.")
+    submitter_email: str = Field(..., description="The email of the person submitting the case.")
+    amount: float = Field(..., description="The primary amount related to the case (e.g., expense amount).")
+    currency: str = Field(..., description="The currency code for the amount (e.g., 'USD').")
+    category: str = Field(..., description="The category of the case (e.g., 'Travel', 'Software').")
+    title: Optional[str] = Field(None, description="An optional title for the case.")
+
+
+class CreateCaseResponse(BaseModel):
+    """The response returned after successfully creating a case."""
+    caseId: str
+    status: str = "Workflow Started"
+
+
+class ProviderState(BaseModel):
+    """Represents the provider state payload from the Pact verifier."""
+    consumer: str
+    state: str
 
 
 # --- API Endpoints ---
+
+
+@app.post("/api/v1/cases", response_model=CreateCaseResponse, status_code=201, tags=["Cases"])
+async def create_case(
+    request: Request,
+    payload: CreateCasePayload = Body(...)
+):
+    """
+    Creates a new case by starting a new Temporal workflow execution.
+    """
+    client: Optional[Client] = request.app.state.temporal_client
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="Temporal client is not available.",
+        )
+
+    task_queue = os.getenv("TEMPORAL_CASES_TASK_QUEUE", "cases-task-queue")
+    case_id = f"ER-{uuid.uuid4()}"
+    process_name = "expense_approval"
+    process_version = "1.0.0"
+
+    try:
+        await client.start_workflow(
+            FlexibleCaseWorkflow.run,
+            args=[process_name, process_version, payload.model_dump()],
+            id=case_id,
+            task_queue=task_queue,
+        )
+        log.info("Workflow started successfully", case_id=case_id)
+        return CreateCaseResponse(caseId=case_id)
+    except RPCError as e:
+        log.error(
+            "Temporal RPCError while starting workflow",
+            case_id=case_id,
+            error_message=e.message,
+            error_status=e.status,
+            error_details=e.details,
+        )
+        raise HTTPException(status_code=500, detail=f"Temporal error: {e.message}")
+    except Exception as e:
+        log.error("Generic failure to start workflow", case_id=case_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to start case workflow.")
+
 
 @app.get("/api/v1/cases/{caseId}", response_model=CaseResponse, tags=["Cases"])
 async def get_case_by_id(
@@ -163,69 +264,86 @@ async def health_check(request: Request):
     }
 
 
-@app.post("/decision", response_model=WorkflowSignalInfo, tags=["Workflows"])
-async def post_decision(request: Request, payload: Decision):
+# --- Pact Provider State Setup ---
+# This endpoint is used by the Pact verifier to set up provider states.
+# It should not be used in a production environment.
+@app.post("/_pact/provider_states", tags=["Pact"])
+async def provider_states_handler(
+    request: Request,
+    payload: ProviderState = Body(...)
+):
+    """Sets up a specific provider state for Pact verification."""
+    log.info("Received provider state setup request", state=payload.state, consumer=payload.consumer)
+    client: Optional[Client] = request.app.state.temporal_client
+    if not client:
+        raise HTTPException(status_code=503, detail="Temporal client not available.")
+
+    task_queue = os.getenv("TEMPORAL_CASES_TASK_QUEUE", "cases-task-queue")
+    case_id = "ER-2024-08-124"
+
+    if payload.state == "a case with ID ER-2024-08-124 exists":
+        # Terminate workflow if it's already running to ensure a clean slate for the test.
+        try:
+            await client.get_workflow_handle(case_id).terminate(reason="Pact test setup")
+            log.info("Terminated existing workflow for clean slate", case_id=case_id)
+        except RPCError:
+            pass  # It's okay if the workflow doesn't exist yet.
+
+        # Start the workflow with the required state.
+        workflow_payload = {
+            "submitter_name": "John Doe",
+            "submitter_email": "john.doe@example.com",
+            "amount": 750.00,
+            "currency": "USD",
+            "category": "Travel",
+            "title": "Expense Report from John Doe for $750.00",
+        }
+        await client.start_workflow(
+            FlexibleCaseWorkflow.run,
+            args=["expense_approval", "1.0.0", workflow_payload],
+            id=case_id,
+            task_queue=task_queue,
+        )
+        log.info("Provider state setup successful", state=payload.state)
+        return {"result": "ok", "state": payload.state}
+
+    log.warn("Provider state not recognized", state=payload.state)
+    return {"result": "State not found", "state": payload.state}
+
+
+@app.post("/api/v1/cases/{caseId}/decision", response_model=DecisionResponse, tags=["Cases"])
+async def submit_decision(
+    request: Request,
+    caseId: str = Path(..., description="The ID of the case to submit a decision for."),
+    payload: AgentDecisionPayload = Body(...),
+):
     """
-    Receives a decision and signals the corresponding running workflow.
+    Receives a decision from an agent and signals the corresponding workflow.
     """
     client: Optional[Client] = request.app.state.temporal_client
     if not client:
         raise HTTPException(
             status_code=503,
-            detail="Temporal client is not available in the current mode.",
+            detail="Temporal client is not available.",
         )
 
-    signal_name = "decision"
     try:
-        handle = client.get_workflow_handle(payload.workflow_id)
-        await handle.signal(signal_name, payload.status)
-        return WorkflowSignalInfo(
-            workflow_id=payload.workflow_id,
-            signal_name=signal_name,
-            timestamp=datetime.now(),
+        # The workflow_id is the same as the caseId
+        handle = client.get_workflow_handle(caseId)
+        # Signal the workflow with the 'decision' signal name and the payload's decision value
+        await handle.signal("decision", payload.decision)
+        return DecisionResponse(
+            caseId=caseId,
+            status="Signal Sent",
+            message=f"Decision '{payload.decision}' was successfully sent to the case.",
         )
     except RPCError as e:
         if e.status and e.status.name == 'NOT_FOUND':
             raise HTTPException(
                 status_code=404,
-                detail=f"Workflow with ID '{payload.workflow_id}' not found or has already completed.",
+                detail=f"Case with ID '{caseId}' not found or has already completed.",
             )
-        raise HTTPException(status_code=500, detail=f"A Temporal service error occurred: {e.message}") from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-
-
-@app.get("/workflows", tags=["Workflows"])
-async def list_workflows(
-    request: Request,
-    query: str = Query("WorkflowType = 'ExampleWorkflow'", description="Temporal list workflow query string."),
-    limit: int = Query(50, ge=1, le=1000, description="Maximum number of workflows to return."),
-) -> List[Dict[str, Any]]:
-    """
-    Lists recent workflows from the Temporal service.
-    """
-    client: Optional[Client] = request.app.state.temporal_client
-    if not client:
         raise HTTPException(
-            status_code=503,
-            detail="Temporal client is not available in the current mode.",
-        )
-
-    try:
-        workflows = []
-        async for workflow in client.list_workflows(query=query):
-            workflows.append(
-                {
-                    "workflow_id": workflow.id,
-                    "run_id": workflow.run_id,
-                    "workflow_type": workflow.workflow_type,
-                    "status": workflow.status.name,
-                    "start_time": workflow.start_time,
-                    "close_time": workflow.close_time,
-                }
-            )
-            if len(workflows) >= limit:
-                break
-        return workflows
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list workflows: {str(e)}")
+            status_code=500,
+            detail=f"Temporal service error: {e.message}"
+        ) from e

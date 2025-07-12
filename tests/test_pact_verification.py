@@ -105,6 +105,7 @@ async def test_api_honors_pact_contract(request):
         verifier = Verifier(
             provider="TracerailAPI",
             provider_base_url=f"http://{HOST}:{API_PORT}",
+            provider_states_setup_url=f"http://{HOST}:{API_PORT}/_pact/provider_states",
         )
         success, logs = verifier.verify_pacts(str(pact_file))
 
@@ -122,8 +123,7 @@ async def test_api_honors_pact_contract(request):
         # 5. TEARDOWN: Clean up all resources
         if workflow_handle:
             await workflow_handle.terminate(reason="Test completed")
-        if temporal_client:
-            await temporal_client.close()
+        # The temporal client does not need to be explicitly closed here.
         if worker_process.is_alive():
             worker_process.terminate()
         if api_server_process.is_alive():
